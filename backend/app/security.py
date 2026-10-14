@@ -8,11 +8,10 @@ from time import monotonic
 import jwt
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.orm import Session
+from pymongo.database import Database
 
 from . import config
-from .db import get_db
-from .models import AdminUser
+from .db import get_db, get_secret_key
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -40,20 +39,21 @@ DUMMY_HASH = hash_password("not-a-real-password")
 
 def create_token(username: str) -> str:
     exp = datetime.now(timezone.utc) + timedelta(hours=config.TOKEN_TTL_HOURS)
-    return jwt.encode({"sub": username, "exp": exp}, config.SECRET_KEY, algorithm="HS256")
+    return jwt.encode({"sub": username, "exp": exp}, get_secret_key(), algorithm="HS256")
 
 
 def get_current_admin(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
-    db: Session = Depends(get_db),
-) -> AdminUser:
+    db: Database = Depends(get_db),
+) -> dict:
     if creds is None:
         raise HTTPException(401, "not_authenticated")
     try:
-        payload = jwt.decode(creds.credentials, config.SECRET_KEY, algorithms=["HS256"])
+        payload = jwt.decode(creds.credentials, get_secret_key(), algorithms=["HS256"])
     except jwt.PyJWTError:
         raise HTTPException(401, "invalid_token")
-    user = db.query(AdminUser).filter(AdminUser.username == payload.get("sub")).first()
+    sub = payload.get("sub")
+    user = db.admin_users.find_one({"username": sub}) if isinstance(sub, str) else None
     if user is None:
         raise HTTPException(401, "invalid_token")
     return user
@@ -79,4 +79,9 @@ class RateLimiter:
         if len(q) >= self.limit:
             raise HTTPException(429, "too_many_requests")
         q.append(now)
+
+
+
+
+
 

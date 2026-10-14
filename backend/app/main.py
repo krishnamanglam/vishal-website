@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config
-from .db import Base, SessionLocal, engine
+from .db import ensure_indexes, get_database
 from .routes_admin import router as admin_router
 from .routes_auth import router as auth_router
 from .routes_public import router as public_router
@@ -20,10 +20,10 @@ log = logging.getLogger("startup")
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     try:
-        Base.metadata.create_all(engine)
-        with SessionLocal() as db:
-            seed(db)
-    except Exception:  # another instance may be setting up at the same moment
+        db = get_database()
+        ensure_indexes(db)
+        seed(db)
+    except Exception:  # keep the server up so /api/health/db can explain what is wrong
         log.exception("Startup setup failed; continuing")
     yield
 
@@ -57,6 +57,17 @@ def health():
     return {"ok": True}
 
 
+@app.get("/api/health/db")
+def health_db():
+    """Setup check: can the server reach MongoDB Atlas?"""
+    try:
+        get_database().command("ping")
+    except Exception:
+        log.exception("Database ping failed")
+        raise HTTPException(503, "database_unreachable")
+    return {"ok": True, "database": "connected"}
+
+
 # Serve the built React app when it exists (production: one server does everything).
 DIST = (Path(__file__).resolve().parent.parent.parent / "frontend" / "dist").resolve()
 if DIST.exists():
@@ -70,6 +81,9 @@ if DIST.exists():
         if full_path and candidate.is_file() and DIST in candidate.parents:
             return FileResponse(candidate)
         return FileResponse(DIST / "index.html")
+
+
+
 
 
 

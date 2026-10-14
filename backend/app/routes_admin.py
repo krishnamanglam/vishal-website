@@ -1,17 +1,18 @@
 ﻿import csv
 import io
+import re
 import secrets
 from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session, joinedload
+from pymongo.database import Database
+from pymongo.errors import DuplicateKeyError
 
 from . import config, notify
-from .db import get_db
-from .models import PAYMENT_STATUSES, STATUSES, AdminUser, RequestEvent, Service, ServiceRequest, utcnow
+from .db import get_db, object_id
+from .models import STATUSES, utcnow
 from .routes_public import iso, pay_url
 from .schemas import PaymentLinkIn, RequestPatch, ServiceIn
 from .security import get_current_admin
@@ -31,23 +32,16 @@ def to_ist_date(dt: datetime) -> date:
 
 # ---------- serialisers ----------
 
-def service_admin(s: Service) -> dict:
+def service_admin(s: dict) -> dict:
     return {
-        "id": s.id, "slug": s.slug, "name_en": s.name_en, "name_hi": s.name_hi,
-        "desc_en": s.desc_en, "desc_hi": s.desc_hi, "icon": s.icon, "fields": s.fields,
-        "active": s.active, "sort_order": s.sort_order,
+        "id": str(s["_id"]), "slug": s["slug"], "name_en": s["name_en"], "name_hi": s["name_hi"],
+        "desc_en": s.get("desc_en", ""), "desc_hi": s.get("desc_hi", ""), "icon": s.get("icon", "📄"),
+        "fields": s.get("fields", []), "active": s.get("active", True), "sort_order": s.get("sort_order", 0),
     }
 
 
-def request_row(r: ServiceRequest) -> dict:
-    return {
-        "id": r.id, "tracking_id": r.tracking_id,
-        "service": {"slug": r.service.slug, "name_en": r.service.name_en,
-                    "name_hi": r.service.name_hi, "icon": r.service.icon},
-        "name": r.name, "phone": r.phone, "status": r.status, "fee": r.fee,
-        "payment_status": r.payment_status, "created_at": iso(r.created_at),
-        "summary": _summary(r),
-    }
+def _services_by_id(db: Database) -> dict:
+    return {s["_id"]: s for s in db.services.find()}
 
 
 def _plain(value) -> str:
@@ -59,46 +53,60 @@ def _plain(value) -> str:
     return str(value)
 
 
-def _summary(r: ServiceRequest) -> str:
-    parts = [_plain(v) for k, v in r.data.items() if k != "notes"][:3]
+def _summary(r: dict) -> str:
+    parts = [_plain(v) for k, v in r.get("data", {}).items() if k != "notes"][:3]
     return " · ".join(parts)
 
 
-def request_detail(r: ServiceRequest) -> dict:
-    out = request_row(r)
+def request_row(r: dict, services: dict) -> dict:
+    s = services.get(r["service_id"], {})
+    return {
+        "id": str(r["_id"]), "tracking_id": r["tracking_id"],
+        "service": {"slug": s.get("slug", r.get("service_slug", "")), "name_en": s.get("name_en", ""),
+                    "name_hi": s.get("name_hi", ""), "icon": s.get("icon", "📄")},
+        "name": r["name"], "phone": r["phone"], "status": r["status"], "fee": r.get("fee"),
+        "payment_status": r["payment_status"], "created_at": iso(r["created_at"]),
+        "summary": _summary(r),
+    }
+
+
+def request_detail(r: dict, services: dict) -> dict:
+    out = request_row(r, services)
+    service = services.get(r["service_id"], {})
     out.update(
-        service={**out["service"], "fields": r.service.fields},
-        data=r.data, admin_note=r.admin_note, pay_url=pay_url(r.pay_token),
-        paid_at=iso(r.paid_at), updated_at=iso(r.updated_at),
-        events=[{"id": e.id, "kind": e.kind, "text": e.text, "actor": e.actor,
-                 "created_at": iso(e.created_at)} for e in r.events],
+        service={**out["service"], "fields": service.get("fields", [])},
+        data=r.get("data", {}), admin_note=r.get("admin_note", ""), pay_url=pay_url(r.get("pay_token")),
+        paid_at=iso(r.get("paid_at")), updated_at=iso(r["updated_at"]),
+        events=[{"id": i, "kind": e["kind"], "text": e["text"], "actor": e["actor"],
+                 "created_at": iso(e["created_at"])} for i, e in enumerate(r.get("events", []))],
     )
     return out
 
 
-def _filtered(stmt, service, status, payment, q, date_from, date_to):
+def _query(service, status, payment, q, date_from, date_to) -> dict:
+    query: dict = {}
     if service:
-        stmt = stmt.where(Service.slug == service)
+        query["service_slug"] = service
     if status:
-        stmt = stmt.where(ServiceRequest.status == status)
+        query["status"] = status
     if payment:
-        stmt = stmt.where(ServiceRequest.payment_status == payment)
-    if q:
-        q = q.strip()[:60]
-        stmt = stmt.where(or_(
-            ServiceRequest.name.icontains(q, autoescape=True),
-            ServiceRequest.phone.icontains(q, autoescape=True),
-            ServiceRequest.tracking_id.icontains(q, autoescape=True),
-        ))
+        query["payment_status"] = payment
+    if q and q.strip():
+        rx = {"$regex": re.escape(q.strip()[:60]), "$options": "i"}
+        query["$or"] = [{"name": rx}, {"phone": rx}, {"tracking_id": rx}]
+    created: dict = {}
     if date_from:
-        stmt = stmt.where(ServiceRequest.created_at >= ist_day_start_utc(date_from))
+        created["$gte"] = ist_day_start_utc(date_from)
     if date_to:
-        stmt = stmt.where(ServiceRequest.created_at < ist_day_start_utc(date_to + timedelta(days=1)))
-    return stmt
+        created["$lt"] = ist_day_start_utc(date_to + timedelta(days=1))
+    if created:
+        query["created_at"] = created
+    return query
 
 
-def _get_request(db: Session, request_id: int) -> ServiceRequest:
-    req = db.get(ServiceRequest, request_id)
+def _get_request(db: Database, request_id: str) -> dict:
+    oid = object_id(request_id)
+    req = db.requests.find_one({"_id": oid}) if oid else None
     if req is None:
         raise HTTPException(404, "not_found")
     return req
@@ -107,43 +115,38 @@ def _get_request(db: Session, request_id: int) -> ServiceRequest:
 # ---------- dashboard ----------
 
 @router.get("/stats")
-def stats(db: Session = Depends(get_db)):
+def stats(db: Database = Depends(get_db)):
     today = datetime.now(IST).date()
     first_day = today - timedelta(days=29)
     first_utc = ist_day_start_utc(first_day)
+    reqs = db.requests
 
-    total = db.scalar(select(func.count(ServiceRequest.id))) or 0
-    today_count = db.scalar(
-        select(func.count(ServiceRequest.id)).where(ServiceRequest.created_at >= ist_day_start_utc(today))
-    ) or 0
-    by_status = dict(db.execute(
-        select(ServiceRequest.status, func.count()).group_by(ServiceRequest.status)
-    ).all())
-    revenue = db.scalar(
-        select(func.coalesce(func.sum(ServiceRequest.fee), 0)).where(ServiceRequest.payment_status == "paid")
-    )
-    awaiting_amount, awaiting_count = db.execute(
-        select(func.coalesce(func.sum(ServiceRequest.fee), 0), func.count())
-        .where(ServiceRequest.payment_status == "pending")
-    ).one()
+    total = reqs.count_documents({})
+    today_count = reqs.count_documents({"created_at": {"$gte": ist_day_start_utc(today)}})
+    by_status = {d["_id"]: d["n"] for d in reqs.aggregate([{"$group": {"_id": "$status", "n": {"$sum": 1}}}])}
 
+    def money(payment_status: str):
+        rows = list(reqs.aggregate([
+            {"$match": {"payment_status": payment_status}},
+            {"$group": {"_id": None, "amount": {"$sum": {"$ifNull": ["$fee", 0]}}, "n": {"$sum": 1}}},
+        ]))
+        return (rows[0]["amount"], rows[0]["n"]) if rows else (0, 0)
+
+    revenue, _ = money("paid")
+    awaiting_amount, awaiting_count = money("pending")
+
+    counts = {d["_id"]: d["n"] for d in reqs.aggregate([{"$group": {"_id": "$service_slug", "n": {"$sum": 1}}}])}
     by_service = [
-        {"slug": slug, "name_en": en, "name_hi": hi, "icon": icon, "count": count}
-        for slug, en, hi, icon, count in db.execute(
-            select(Service.slug, Service.name_en, Service.name_hi, Service.icon, func.count(ServiceRequest.id))
-            .outerjoin(ServiceRequest, ServiceRequest.service_id == Service.id)
-            .group_by(Service.id).order_by(Service.sort_order, Service.id)
-        ).all()
+        {"slug": s["slug"], "name_en": s["name_en"], "name_hi": s["name_hi"], "icon": s.get("icon", "📄"),
+         "count": counts.get(s["slug"], 0)}
+        for s in db.services.find().sort([("sort_order", 1), ("_id", 1)])
     ]
 
     days = {first_day + timedelta(days=i): {"requests": 0, "revenue": 0} for i in range(30)}
-    for (created,) in db.execute(select(ServiceRequest.created_at).where(ServiceRequest.created_at >= first_utc)):
-        days[to_ist_date(created)]["requests"] += 1
-    for paid_at, fee in db.execute(
-        select(ServiceRequest.paid_at, ServiceRequest.fee)
-        .where(ServiceRequest.payment_status == "paid", ServiceRequest.paid_at >= first_utc)
-    ):
-        days[to_ist_date(paid_at)]["revenue"] += fee or 0
+    for r in reqs.find({"created_at": {"$gte": first_utc}}, {"created_at": 1}):
+        days[to_ist_date(r["created_at"])]["requests"] += 1
+    for r in reqs.find({"payment_status": "paid", "paid_at": {"$gte": first_utc}}, {"paid_at": 1, "fee": 1}):
+        days[to_ist_date(r["paid_at"])]["revenue"] += r.get("fee") or 0
 
     open_count = sum(by_status.get(s, 0) for s in ("new", "in_progress", "waiting_customer"))
     done_count = sum(by_status.get(s, 0) for s in ("done", "delivered"))
@@ -160,25 +163,20 @@ def stats(db: Session = Depends(get_db)):
 
 # ---------- requests ----------
 
-def _list_stmt(service, status, payment, q, date_from, date_to):
-    stmt = select(ServiceRequest).join(Service, Service.id == ServiceRequest.service_id)
-    return _filtered(stmt, service, status, payment, q, date_from, date_to)
-
-
 @router.get("/requests")
 def list_requests(
     service: str | None = None, status: str | None = None, payment: str | None = None,
     q: str | None = None, date_from: date | None = None, date_to: date | None = None,
     page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
-    db: Session = Depends(get_db),
+    db: Database = Depends(get_db),
 ):
-    base = _list_stmt(service, status, payment, q, date_from, date_to)
-    total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
-    rows = db.scalars(
-        base.options(joinedload(ServiceRequest.service))
-        .order_by(ServiceRequest.id.desc()).offset((page - 1) * page_size).limit(page_size)
-    ).all()
-    return {"items": [request_row(r) for r in rows], "total": total, "page": page, "page_size": page_size}
+    query = _query(service, status, payment, q, date_from, date_to)
+    total = db.requests.count_documents(query)
+    rows = list(
+        db.requests.find(query).sort([("created_at", -1), ("_id", -1)]).skip((page - 1) * page_size).limit(page_size)
+    )
+    services = _services_by_id(db)
+    return {"items": [request_row(r, services) for r in rows], "total": total, "page": page, "page_size": page_size}
 
 
 def _csv_safe(value) -> str:
@@ -190,22 +188,21 @@ def _csv_safe(value) -> str:
 def export_csv(
     service: str | None = None, status: str | None = None, payment: str | None = None,
     q: str | None = None, date_from: date | None = None, date_to: date | None = None,
-    db: Session = Depends(get_db),
+    db: Database = Depends(get_db),
 ):
-    rows = db.scalars(
-        _list_stmt(service, status, payment, q, date_from, date_to)
-        .options(joinedload(ServiceRequest.service)).order_by(ServiceRequest.id.desc()).limit(10000)
-    ).all()
+    query = _query(service, status, payment, q, date_from, date_to)
+    rows = list(db.requests.find(query).sort([("created_at", -1), ("_id", -1)]).limit(10000))
+    services = _services_by_id(db)
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["Tracking ID", "Created (IST)", "Service", "Name", "Phone", "Status",
                      "Fee", "Payment", "Details"])
     for r in rows:
-        created = r.created_at.replace(tzinfo=timezone.utc).astimezone(IST).strftime("%Y-%m-%d %H:%M")
-        details = "; ".join(f"{k}: {_plain(v)}" for k, v in r.data.items())
+        created = r["created_at"].replace(tzinfo=timezone.utc).astimezone(IST).strftime("%Y-%m-%d %H:%M")
+        details = "; ".join(f"{k}: {_plain(v)}" for k, v in r.get("data", {}).items())
         writer.writerow([_csv_safe(x) for x in (
-            r.tracking_id, created, r.service.name_en, r.name, r.phone, r.status,
-            r.fee, r.payment_status, details)])
+            r["tracking_id"], created, services.get(r["service_id"], {}).get("name_en", ""), r["name"],
+            r["phone"], r["status"], r.get("fee"), r["payment_status"], details)])
     # BOM so Excel shows Hindi text correctly.
     payload = "\ufeff" + buf.getvalue()
     return StreamingResponse(
@@ -215,122 +212,124 @@ def export_csv(
 
 
 @router.get("/requests/{request_id}")
-def get_request(request_id: int, db: Session = Depends(get_db)):
-    return request_detail(_get_request(db, request_id))
+def get_request(request_id: str, db: Database = Depends(get_db)):
+    return request_detail(_get_request(db, request_id), _services_by_id(db))
+
+
+def _event(kind: str, text: str, actor: str) -> dict:
+    return {"kind": kind, "text": text, "actor": actor, "created_at": utcnow()}
+
+
+def _apply(db: Database, req: dict, sets: dict, events: list) -> dict:
+    sets["updated_at"] = utcnow()
+    update: dict = {"$set": sets}
+    if events:
+        update["$push"] = {"events": {"$each": events}}
+    db.requests.update_one({"_id": req["_id"]}, update)
+    return request_detail(db.requests.find_one({"_id": req["_id"]}), _services_by_id(db))
 
 
 @router.patch("/requests/{request_id}")
 def patch_request(
-    request_id: int, body: RequestPatch,
-    admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db),
+    request_id: str, body: RequestPatch,
+    admin: dict = Depends(get_current_admin), db: Database = Depends(get_db),
 ):
     req = _get_request(db, request_id)
+    who = admin["username"]
+    sets: dict = {}
+    events: list = []
 
-    if body.status is not None and body.status != req.status:
+    if body.status is not None and body.status != req["status"]:
         if body.status not in STATUSES:
             raise HTTPException(422, "invalid_status")
-        req.events.append(RequestEvent(kind="status", text=f"{req.status} → {body.status}", actor=admin.username))
-        req.status = body.status
+        events.append(_event("status", f"{req['status']} → {body.status}", who))
+        sets["status"] = body.status
 
-    if body.fee is not None and body.fee != req.fee:
-        if req.payment_status == "paid":
+    if body.fee is not None and body.fee != req.get("fee"):
+        if req["payment_status"] == "paid":
             raise HTTPException(400, "already_paid")
-        req.events.append(RequestEvent(kind="fee", text=f"Fee set to ₹{body.fee}", actor=admin.username))
-        req.fee = body.fee
+        events.append(_event("fee", f"Fee set to ₹{body.fee}", who))
+        sets["fee"] = body.fee
 
-    if body.admin_note is not None and body.admin_note != req.admin_note:
-        req.admin_note = body.admin_note
-        req.events.append(RequestEvent(kind="note", text="Internal note updated", actor=admin.username))
+    if body.admin_note is not None and body.admin_note != req.get("admin_note", ""):
+        sets["admin_note"] = body.admin_note
+        events.append(_event("note", "Internal note updated", who))
 
-    req.updated_at = utcnow()
-    db.commit()
-    return request_detail(req)
+    return _apply(db, req, sets, events)
 
 
-def _payment_message(req: ServiceRequest, link: str) -> str:
+def _payment_message(req: dict, service: dict, link: str) -> str:
     return (
-        f"{config.COMPANY_NAME_EN}: Your {req.service.name_en} request {req.tracking_id} is ready. "
-        f"Please pay Rs {req.fee} here: {link}\n"
-        f"{config.COMPANY_NAME_HI}: आपका {req.service.name_hi} ({req.tracking_id}) तैयार है। "
-        f"कृपया Rs {req.fee} का भुगतान करें: {link}"
+        f"{config.COMPANY_NAME_EN}: Your {service.get('name_en', '')} request {req['tracking_id']} is ready. "
+        f"Please pay Rs {req['fee']} here: {link}\n"
+        f"{config.COMPANY_NAME_HI}: आपका {service.get('name_hi', '')} ({req['tracking_id']}) तैयार है। "
+        f"कृपया Rs {req['fee']} का भुगतान करें: {link}"
     )
 
 
 @router.post("/requests/{request_id}/payment-link")
 def send_payment_link(
-    request_id: int, body: PaymentLinkIn,
-    admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db),
+    request_id: str, body: PaymentLinkIn,
+    admin: dict = Depends(get_current_admin), db: Database = Depends(get_db),
 ):
     req = _get_request(db, request_id)
-    if req.payment_status == "paid":
+    if req["payment_status"] == "paid":
         raise HTTPException(400, "already_paid")
-    if not req.fee or req.fee <= 0:
+    if not req.get("fee") or req["fee"] <= 0:
         raise HTTPException(400, "fee_required")
 
-    if not req.pay_token:
-        req.pay_token = secrets.token_urlsafe(16)
-    req.payment_status = "pending"
-    link = pay_url(req.pay_token)
-    message = _payment_message(req, link)
+    token = req.get("pay_token") or secrets.token_urlsafe(16)
+    link = pay_url(token)
+    service = db.services.find_one({"_id": req["service_id"]}) or {}
+    message = _payment_message(req, service, link)
 
-    result = notify.send(req.phone, message, body.channel)
+    result = notify.send(req["phone"], message, body.channel)
     outcome = "sent" if result["sent"] else "not sent automatically"
-    req.events.append(RequestEvent(
-        kind="payment_link", actor=admin.username,
-        text=f"Payment link ₹{req.fee} via {body.channel}: {outcome}"))
-    req.updated_at = utcnow()
-    db.commit()
+    event = _event("payment_link", f"Payment link ₹{req['fee']} via {body.channel}: {outcome}", admin["username"])
+    detail = _apply(db, req, {"pay_token": token, "payment_status": "pending"}, [event])
     return {
         "pay_url": link, "message": message, "delivery": result,
-        "whatsapp_url": f"https://wa.me/91{req.phone}?text={quote(message)}",
-        "request": request_detail(req),
+        "whatsapp_url": f"https://wa.me/91{req['phone']}?text={quote(message)}",
+        "request": detail,
     }
 
 
 @router.post("/requests/{request_id}/mark-paid")
 def mark_paid(
-    request_id: int,
-    admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db),
+    request_id: str,
+    admin: dict = Depends(get_current_admin), db: Database = Depends(get_db),
 ):
     req = _get_request(db, request_id)
-    if req.payment_status == "paid":
+    if req["payment_status"] == "paid":
         raise HTTPException(400, "already_paid")
-    if req.fee is None:
+    if req.get("fee") is None:
         raise HTTPException(400, "fee_required")
-    req.payment_status = "paid"
-    req.paid_at = utcnow()
-    req.events.append(RequestEvent(kind="paid", text=f"Payment of ₹{req.fee} received", actor=admin.username))
-    req.updated_at = utcnow()
-    db.commit()
-    return request_detail(req)
+    event = _event("paid", f"Payment of ₹{req['fee']} received", admin["username"])
+    return _apply(db, req, {"payment_status": "paid", "paid_at": utcnow()}, [event])
 
 
 # ---------- services ----------
 
 @router.get("/services")
-def list_services(db: Session = Depends(get_db)):
-    rows = db.scalars(select(Service).order_by(Service.sort_order, Service.id)).all()
-    return [service_admin(s) for s in rows]
+def list_services(db: Database = Depends(get_db)):
+    return [service_admin(s) for s in db.services.find().sort([("sort_order", 1), ("_id", 1)])]
 
 
 @router.post("/services", status_code=201)
-def create_service(body: ServiceIn, db: Session = Depends(get_db)):
-    if db.scalar(select(Service.id).where(Service.slug == body.slug)):
+def create_service(body: ServiceIn, db: Database = Depends(get_db)):
+    doc = body.model_dump()
+    try:
+        db.services.insert_one(doc)
+    except DuplicateKeyError:
         raise HTTPException(409, "slug_exists")
-    svc = Service(**body.model_dump())
-    db.add(svc)
-    db.commit()
-    return service_admin(svc)
+    return service_admin(doc)
 
 
 @router.put("/services/{service_id}")
-def update_service(service_id: int, body: ServiceIn, db: Session = Depends(get_db)):
-    svc = db.get(Service, service_id)
-    if svc is None:
+def update_service(service_id: str, body: ServiceIn, db: Database = Depends(get_db)):
+    oid = object_id(service_id)
+    if oid is None or db.services.find_one({"_id": oid}) is None:
         raise HTTPException(404, "not_found")
-    for key, value in body.model_dump(exclude={"slug"}).items():  # slug stays stable
-        setattr(svc, key, value)
-    db.commit()
-    return service_admin(svc)
-
+    db.services.update_one({"_id": oid}, {"$set": body.model_dump(exclude={"slug"})})  # slug stays stable
+    return service_admin(db.services.find_one({"_id": oid}))
 

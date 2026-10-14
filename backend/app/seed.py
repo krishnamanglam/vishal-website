@@ -1,10 +1,8 @@
 ﻿import secrets
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from pymongo.database import Database
 
 from . import config
-from .models import AdminUser, Service
 from .security import hash_password
 
 
@@ -140,39 +138,26 @@ DEFAULT_SERVICES = [
 ]
 
 
-def upgrade_defaults(db: Session) -> None:
-    """Add the passenger rows to Train/Flight services created before this feature existed."""
-    for slug in ("train-ticket", "flight-ticket"):
-        svc = db.scalar(select(Service).where(Service.slug == slug))
-        if svc is None or any(f.get("type") == "passengers" for f in svc.fields):
-            continue
-        fields = list(svc.fields)
-        idx = next((i for i, f in enumerate(fields) if f.get("key") == "passengers" and f.get("type") == "number"), None)
-        if idx is None:
-            continue  # service was customised, leave it alone
-        fields.insert(idx + 1, dict(PASSENGER_FIELD))
-        svc.fields = fields  # reassign so SQLAlchemy notices the JSON change
-        db.commit()
 
+def seed(db: Database) -> None:
+    """Create the default services and the first admin. Safe to run on every start,
+    and safe if two server copies start at the same moment."""
+    for item in DEFAULT_SERVICES:
+        db.services.update_one({"slug": item["slug"]}, {"$setOnInsert": {**item, "active": True}}, upsert=True)
 
-def seed(db: Session) -> None:
-    if db.scalar(select(Service.id).limit(1)) is None:
-        for item in DEFAULT_SERVICES:
-            db.add(Service(**item, active=True))
-        db.commit()
-    upgrade_defaults(db)
-
-    if db.scalar(select(AdminUser.id).limit(1)) is None:
+    if db.admin_users.count_documents({}, limit=1) == 0:
         password = config.ADMIN_PASSWORD
         generated = not password
         if generated:
             password = secrets.token_urlsafe(9)
-        db.add(AdminUser(username=config.ADMIN_USERNAME, password_hash=hash_password(password)))
-        db.commit()
-        if generated:
+        result = db.admin_users.update_one(
+            {"username": config.ADMIN_USERNAME},
+            {"$setOnInsert": {"username": config.ADMIN_USERNAME, "password_hash": hash_password(password)}},
+            upsert=True,
+        )
+        if generated and result.upserted_id is not None:
             print("=" * 60, flush=True)
             print(f" Admin account created.  Username: {config.ADMIN_USERNAME}", flush=True)
             print(f" Password (shown once, change it after login): {password}", flush=True)
             print("=" * 60, flush=True)
-
 

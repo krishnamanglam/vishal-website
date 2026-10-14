@@ -1,28 +1,23 @@
-# Render Blueprint: one web service + a persistent disk for the database.
-# A persistent disk needs a paid instance (starter). Without a disk, all
-# requests and settings are lost on every restart or redeploy.
+﻿# Render Blueprint: one free web service. All data lives in MongoDB Atlas, so no disk is needed.
+# Free instances sleep after 15 minutes without visitors and take about a minute to wake up.
 services:
   - type: web
     name: subh-sheva-sansthan
     runtime: docker
-    plan: starter
+    plan: free
     healthCheckPath: /api/health
-    disk:
-      name: data
-      mountPath: /data
-      sizeGB: 1
     envVars:
-      - key: DATA_DIR
-        value: /data
+      - key: MONGODB_URI     # Atlas connection string (with your password in it)
+        sync: false
+      - key: MONGODB_DB
+        value: subh_sheva
       - key: ADMIN_USERNAME
         value: admin
-      - key: ADMIN_PASSWORD   # you type this in the Render dashboard
+      - key: ADMIN_PASSWORD  # you type this in the Render dashboard
         sync: false
-      - key: SECRET_KEY
-        generateValue: true
-      - key: FRONTEND_URL     # your site address, e.g. https://subh-sheva-sansthan.onrender.com
+      - key: FRONTEND_URL    # your site address, e.g. https://subh-sheva-sansthan.onrender.com
         sync: false
-      - key: UPI_ID           # e.g. yourshop@upi
+      - key: UPI_ID          # e.g. yourshop@upi
         sync: false
       - key: PAYEE_NAME
         value: Subh Sheva Sansthan

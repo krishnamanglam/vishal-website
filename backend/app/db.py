@@ -1,53 +1,72 @@
-﻿import os
+﻿"""MongoDB access. One shared client per server process (important on serverless hosts)."""
+import secrets
 
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+import certifi
+from bson import ObjectId
+from bson.errors import InvalidId
+from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument
+from pymongo.database import Database
+from pymongo.errors import DuplicateKeyError
 
-from .config import DATA_DIR
+from . import config
 
-
-def _database_url() -> str:
-    """DATABASE_URL (Postgres, e.g. Neon) in production, local SQLite file otherwise."""
-    url = os.getenv("DATABASE_URL", "").strip()
-    if not url:
-        return f"sqlite:///{DATA_DIR / 'app.db'}"
-    # Hosts hand out postgres:// or postgresql://; SQLAlchemy needs the driver name too.
-    for prefix in ("postgres://", "postgresql://"):
-        if url.startswith(prefix):
-            return "postgresql+psycopg://" + url[len(prefix):]
-    return url
+_client: MongoClient | None = None
+_secret: str | None = None
 
 
-if os.getenv("VERCEL") and not os.getenv("DATABASE_URL", "").strip():
-    raise RuntimeError("Set DATABASE_URL to a Postgres address (for example a free Neon database).")
-
-DATABASE_URL = _database_url()
-IS_SQLITE = DATABASE_URL.startswith("sqlite")
-
-if IS_SQLITE:
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-
-    @event.listens_for(engine, "connect")
-    def _sqlite_pragmas(dbapi_conn, _):
-        cur = dbapi_conn.cursor()
-        cur.execute("PRAGMA foreign_keys=ON")
-        cur.execute("PRAGMA journal_mode=WAL")
-        cur.close()
-else:
-    # Free Postgres hosts close idle connections, so test each one before use.
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=240, pool_size=5, max_overflow=5)
-
-SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+def get_database() -> Database:
+    global _client
+    if _client is None:
+        if not config.MONGODB_URI:
+            raise RuntimeError("Set MONGODB_URI to your MongoDB Atlas connection string.")
+        options = {"serverSelectionTimeoutMS": 10000, "maxPoolSize": 10}
+        if config.MONGODB_URI.startswith("mongodb+srv://"):
+            options["tlsCAFile"] = certifi.where()  # reliable certificates on any host
+        _client = MongoClient(config.MONGODB_URI, **options)
+    return _client[config.MONGODB_DB]
 
 
-class Base(DeclarativeBase):
-    pass
+def get_db() -> Database:
+    """FastAPI dependency."""
+    return get_database()
 
 
-def get_db():
-    db = SessionLocal()
+def object_id(value: str) -> ObjectId | None:
     try:
-        yield db
-    finally:
-        db.close()
+        return ObjectId(value)
+    except (InvalidId, TypeError):
+        return None
 
+
+def ensure_indexes(db: Database) -> None:
+    db.admin_users.create_index("username", unique=True)
+    db.services.create_index("slug", unique=True)
+    db.requests.create_index("tracking_id", unique=True)
+    db.requests.create_index("pay_token", unique=True, sparse=True)  # only set once a link exists
+    db.requests.create_index([("created_at", DESCENDING)])
+    db.requests.create_index([("phone", ASCENDING)])
+    db.requests.create_index([("service_slug", ASCENDING), ("status", ASCENDING)])
+
+
+def get_secret_key() -> str:
+    """Key used to sign admin login tokens."""
+    global _secret
+    if _secret:
+        return _secret
+    if config.SECRET_KEY_ENV:
+        _secret = config.SECRET_KEY_ENV
+        return _secret
+    settings = get_database().settings
+    for _ in range(3):  # two servers starting together may race to create it
+        try:
+            doc = settings.find_one_and_update(
+                {"_id": "secret_key"},
+                {"$setOnInsert": {"value": secrets.token_urlsafe(48)}},
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+            _secret = doc["value"]
+            return _secret
+        except DuplicateKeyError:
+            continue
+    raise RuntimeError("Could not create the signing key")

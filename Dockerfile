@@ -1,4 +1,4 @@
-# Stage 1: build the React website
+﻿# Stage 1: build the React website
 FROM node:20-alpine AS web
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
@@ -15,12 +15,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./
 COPY --from=web /build/frontend/dist /app/frontend/dist
 
-# The database lives in /data. Mount a persistent disk/volume there.
-RUN useradd --create-home app && mkdir -p /data && chown -R app /data
+# No disk needed: all data lives in MongoDB Atlas (set MONGODB_URI).
+RUN useradd --create-home app
 USER app
-ENV DATA_DIR=/data
 EXPOSE 8000
 
-# One worker on purpose: SQLite database and in-memory rate limits.
+# One worker is enough for a small shop; rate limits are kept in memory.
 # --proxy-headers makes rate limiting see the real visitor IP behind the host's proxy.
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]
+
