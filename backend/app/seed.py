@@ -1,4 +1,4 @@
-﻿import secrets
+import secrets
 
 from pymongo.database import Database
 

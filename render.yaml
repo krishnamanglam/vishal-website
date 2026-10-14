@@ -1,4 +1,4 @@
-﻿# Render Blueprint: one free web service. All data lives in MongoDB Atlas, so no disk is needed.
+# Render Blueprint: one free web service. All data lives in MongoDB Atlas, so no disk is needed.
 # Free instances sleep after 15 minutes without visitors and take about a minute to wake up.
 services:
   - type: web

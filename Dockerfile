@@ -1,4 +1,4 @@
-﻿# Stage 1: build the React website
+# Stage 1: build the React website
 FROM node:20-alpine AS web
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./

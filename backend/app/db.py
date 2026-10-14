@@ -1,4 +1,4 @@
-﻿"""MongoDB access. One shared client per server process (important on serverless hosts)."""
+"""MongoDB access. One shared client per server process (important on serverless hosts)."""
 import secrets
 
 import certifi

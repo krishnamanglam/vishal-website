@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "../../api";
 import { Alert, PayBadge, Spinner, StatusBadge, errorText } from "../../components";

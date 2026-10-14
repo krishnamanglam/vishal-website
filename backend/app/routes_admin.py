@@ -1,4 +1,4 @@
-﻿import csv
+import csv
 import io
 import re
 import secrets

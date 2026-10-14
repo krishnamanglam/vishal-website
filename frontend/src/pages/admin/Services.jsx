@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError } from "../../api";
 import { Alert, Spinner, errorText } from "../../components";
 import { useI18n } from "../../i18n";

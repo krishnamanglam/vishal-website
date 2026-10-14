@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { Alert, DynamicFields, Spinner, blankPerson, errorText, passengerCount } from "../components";
