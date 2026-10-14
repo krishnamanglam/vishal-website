@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pymongo.errors import ConfigurationError, OperationFailure, ServerSelectionTimeoutError
 
 from . import config
 from .db import ensure_indexes, get_database
@@ -62,10 +63,23 @@ def health_db():
     """Setup check: can the server reach MongoDB Atlas?"""
     try:
         get_database().command("ping")
-    except Exception:
+    except Exception as exc:
         log.exception("Database ping failed")
-        raise HTTPException(503, "database_unreachable")
+        raise HTTPException(503, {"error": "database_unreachable", "reason": _explain(exc)})
     return {"ok": True, "database": "connected"}
+
+
+def _explain(exc: Exception) -> str:
+    """Plain-language reason for a failed database connection (never includes secrets)."""
+    if isinstance(exc, RuntimeError):
+        return "MONGODB_URI is not set in the environment variables"
+    if isinstance(exc, OperationFailure):
+        return "Atlas rejected the username or password (check MONGODB_URI and the Atlas database user)"
+    if isinstance(exc, ServerSelectionTimeoutError):
+        return "Could not reach Atlas (check Atlas Network Access allows 0.0.0.0/0, and the cluster is running)"
+    if isinstance(exc, ConfigurationError):
+        return "The connection string is not valid (check MONGODB_URI for typos, < > signs or spaces)"
+    return f"Unexpected error: {type(exc).__name__}"
 
 
 # Serve the built React app when it exists (production: one server does everything).
