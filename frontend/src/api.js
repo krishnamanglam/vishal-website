@@ -1,5 +1,9 @@
 const TOKEN_KEY = "ssn_admin_token";
 
+// Empty = same address as the website (local dev proxy, Render). Set VITE_API_URL at build
+// time when the API lives at a different address (for example a separate Vercel project).
+const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+
 export const authToken = {
   get: () => localStorage.getItem(TOKEN_KEY),
   set: (t) => localStorage.setItem(TOKEN_KEY, t),
@@ -27,7 +31,7 @@ async function request(path, { method = "GET", body, admin = false } = {}) {
 
   let res;
   try {
-    res = await fetch(`/api${path}`, {
+    res = await fetch(`${API_BASE}/api${path}`, {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,

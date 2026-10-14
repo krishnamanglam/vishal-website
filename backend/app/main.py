@@ -1,3 +1,4 @@
+﻿import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,12 +14,17 @@ from .routes_auth import router as auth_router
 from .routes_public import router as public_router
 from .seed import seed
 
+log = logging.getLogger("startup")
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    Base.metadata.create_all(engine)
-    with SessionLocal() as db:
-        seed(db)
+    try:
+        Base.metadata.create_all(engine)
+        with SessionLocal() as db:
+            seed(db)
+    except Exception:  # another instance may be setting up at the same moment
+        log.exception("Startup setup failed; continuing")
     yield
 
 
@@ -64,3 +70,6 @@ if DIST.exists():
         if full_path and candidate.is_file() and DIST in candidate.parents:
             return FileResponse(candidate)
         return FileResponse(DIST / "index.html")
+
+
+

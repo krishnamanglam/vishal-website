@@ -1,4 +1,4 @@
-import hashlib
+﻿import hashlib
 import hmac
 import os
 from collections import defaultdict, deque
@@ -69,6 +69,9 @@ class RateLimiter:
 
     def __call__(self, request: Request) -> None:
         ip = request.client.host if request.client else "unknown"
+        if config.TRUST_PROXY:
+            forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            ip = forwarded or ip
         now = monotonic()
         q = self.hits[ip]
         while q and now - q[0] > self.window:
@@ -76,3 +79,4 @@ class RateLimiter:
         if len(q) >= self.limit:
             raise HTTPException(429, "too_many_requests")
         q.append(now)
+

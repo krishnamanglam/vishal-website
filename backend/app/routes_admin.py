@@ -86,9 +86,9 @@ def _filtered(stmt, service, status, payment, q, date_from, date_to):
     if q:
         q = q.strip()[:60]
         stmt = stmt.where(or_(
-            ServiceRequest.name.contains(q, autoescape=True),
-            ServiceRequest.phone.contains(q, autoescape=True),
-            ServiceRequest.tracking_id.contains(q, autoescape=True),
+            ServiceRequest.name.icontains(q, autoescape=True),
+            ServiceRequest.phone.icontains(q, autoescape=True),
+            ServiceRequest.tracking_id.icontains(q, autoescape=True),
         ))
     if date_from:
         stmt = stmt.where(ServiceRequest.created_at >= ist_day_start_utc(date_from))
@@ -332,4 +332,5 @@ def update_service(service_id: int, body: ServiceIn, db: Session = Depends(get_d
         setattr(svc, key, value)
     db.commit()
     return service_admin(svc)
+
 
