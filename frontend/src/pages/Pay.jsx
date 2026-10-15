@@ -24,7 +24,7 @@ export default function Pay() {
         <Alert>{t("pay.invalid")}</Alert>
         <div>
           <Link to="/" className="btn">
-            {t("common.back")}
+            {t("nav.home")}
           </Link>
         </div>
       </div>

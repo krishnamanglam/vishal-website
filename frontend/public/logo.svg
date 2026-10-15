@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Subh Sheva Sansthan">
+  <defs>
+    <linearGradient id="pc" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbcfe8"/>
+      <stop offset=".45" stop-color="#f472b6"/>
+      <stop offset="1" stop-color="#db2777"/>
+    </linearGradient>
+    <linearGradient id="ps" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbcfe8"/>
+      <stop offset="1" stop-color="#ec4899"/>
+    </linearGradient>
+    <linearGradient id="po" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fce7f3"/>
+      <stop offset="1" stop-color="#f472b6"/>
+    </linearGradient>
+  </defs>
+  <g stroke="#fff5fa" stroke-width="1" stroke-linejoin="round">
+    <!-- outer petals -->
+    <path d="M32 24 C37 30 38 37 32 46 C26 37 27 30 32 24 Z" fill="url(#po)" transform="rotate(-70 32 46)"/>
+    <path d="M32 24 C37 30 38 37 32 46 C26 37 27 30 32 24 Z" fill="url(#po)" transform="rotate(70 32 46)"/>
+    <!-- side petals -->
+    <path d="M32 16 C38.5 24 40 34 32 46 C24 34 25.5 24 32 16 Z" fill="url(#ps)" transform="rotate(-36 32 46)"/>
+    <path d="M32 16 C38.5 24 40 34 32 46 C24 34 25.5 24 32 16 Z" fill="url(#ps)" transform="rotate(36 32 46)"/>
+    <!-- centre petal -->
+    <path d="M32 11 C39.5 20 41.5 32 32 46 C22.5 32 24.5 20 32 11 Z" fill="url(#pc)"/>
+  </g>
+  <!-- base -->
+  <path d="M13 44.5 C21 51.5 43 51.5 51 44.5 C44 48 20 48 13 44.5 Z" fill="#be185d"/>
+  <circle cx="32" cy="45" r="2.2" fill="#facc15"/>
+</svg>

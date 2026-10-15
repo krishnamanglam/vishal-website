@@ -25,7 +25,7 @@ export default function Home() {
       <section className="clay hero" aria-labelledby="hero-title">
         <div className="stack">
           <h1 id="hero-title">{t("home.title")}</h1>
-          <p className="muted" style={{ fontSize: "1.1rem" }}>
+          <p className="muted" style={{ fontSize: "1rem" }}>
             {t("home.subtitle")}
           </p>
           <div className="row">
@@ -37,12 +37,26 @@ export default function Home() {
             </Link>
           </div>
         </div>
-        <div className="art" aria-hidden="true">
-          <div className="icon-bubble">🚆</div>
-          <div className="icon-bubble">✈️</div>
-          <div className="icon-bubble">🛂</div>
-          <div className="icon-bubble">🌿</div>
-        </div>
+        {services?.length ? (
+          <nav className="art" aria-label={t("home.services")}>
+            {services.slice(0, 4).map((s) => (
+              <Link key={s.id} to={`/apply/${s.slug}`} className="icon-bubble hero-tile" title={t("home.fill")}>
+                <span className="hero-tile-icon" aria-hidden="true">
+                  {s.icon}
+                </span>
+                <span className="hero-tile-name">{pick(s, "name")}</span>
+              </Link>
+            ))}
+          </nav>
+        ) : (
+          <div className="art" aria-hidden="true">
+            {["🚆", "✈️", "🛂", "🌿"].map((icon) => (
+              <div key={icon} className="icon-bubble hero-tile">
+                <span className="hero-tile-icon">{icon}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section id="services" aria-labelledby="services-title" className="stack">

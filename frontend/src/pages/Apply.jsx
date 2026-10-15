@@ -127,7 +127,7 @@ export default function Apply() {
       <div className="clay stack">
         <Alert>{formError || t("apply.missing")}</Alert>
         <Link to="/" className="btn">
-          {t("common.back")}
+          {t("nav.home")}
         </Link>
       </div>
     );

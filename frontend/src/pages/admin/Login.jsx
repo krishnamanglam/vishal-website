@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError, authToken } from "../../api";
-import { Alert, BrandMark, LangToggle, errorText } from "../../components";
+import { Alert, BackButton, BrandMark, LangToggle, errorText } from "../../components";
 import { useI18n } from "../../i18n";
 
 export default function Login() {
@@ -32,6 +32,9 @@ export default function Login() {
       <div className="row between" style={{ marginBottom: 28 }}>
         <BrandMark />
         <LangToggle />
+      </div>
+      <div className="back-bar" style={{ maxWidth: 440, margin: "0 auto 12px" }}>
+        <BackButton fallback="/" />
       </div>
       <main id="main" className="clay stack" style={{ maxWidth: 440, margin: "0 auto" }}>
         <h1>{t("admin.login")}</h1>

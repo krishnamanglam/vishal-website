@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { api, authToken } from "../../api";
 import { COMPANY } from "../../company";
-import { LangToggle, Spinner } from "../../components";
+import { BackBar, LangToggle, Spinner } from "../../components";
 import { useI18n } from "../../i18n";
 
 export default function AdminLayout() {
@@ -64,6 +64,7 @@ export default function AdminLayout() {
       </aside>
 
       <main className="admin-main" id="main">
+        <BackBar hideOn={["/admin"]} />
         <Outlet />
       </main>
     </div>

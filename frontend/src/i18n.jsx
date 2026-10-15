@@ -87,7 +87,7 @@ const dict = {
     "track.paid": "Payment received. Thank you!",
     "track.rejected": "This request could not be processed. Please contact us.",
 
-    "status.new": "New",
+    "status.new": "Open",
     "status.in_progress": "In progress",
     "status.waiting_customer": "Waiting for you",
     "status.done": "Done",
@@ -144,7 +144,16 @@ const dict = {
     "dash.series.revenue": "Money received (₹)",
     "dash.empty": "No requests yet.",
 
-    "req.title": "All requests",
+    "req.title": "Requests",
+    "req.board": "Board",
+    "req.list": "List",
+    "req.view": "View",
+    "req.filters": "Filters",
+    "req.move_to": "Move to",
+    "req.moved": "{id} moved to {status}",
+    "req.empty_col": "No requests",
+    "req.more": "+{n} more. Narrow the filters or use List view.",
+    "req.hint": "Click a card to open it. Drag it to another column, or use ⋯, to change its status.",
     "req.search": "Search name, mobile or ID",
     "req.service": "Service",
     "req.status": "Status",
@@ -397,7 +406,16 @@ const dict = {
     "dash.series.revenue": "मिली राशि (₹)",
     "dash.empty": "अभी कोई अनुरोध नहीं है।",
 
-    "req.title": "सभी अनुरोध",
+    "req.title": "अनुरोध",
+    "req.board": "बोर्ड",
+    "req.list": "सूची",
+    "req.view": "दृश्य",
+    "req.filters": "फ़िल्टर",
+    "req.move_to": "यहाँ ले जाएं",
+    "req.moved": "{id} को {status} में ले जाया गया",
+    "req.empty_col": "कोई अनुरोध नहीं",
+    "req.more": "+{n} और। फ़िल्टर छोटा करें या सूची दृश्य देखें।",
+    "req.hint": "खोलने के लिए कार्ड पर क्लिक करें। स्थिति बदलने के लिए कार्ड को दूसरे कॉलम में खींचें, या ⋯ का उपयोग करें।",
     "req.search": "नाम, मोबाइल या आईडी खोजें",
     "req.service": "सेवा",
     "req.status": "स्थिति",
@@ -546,6 +564,14 @@ export function formatDate(iso, lang, withTime = true) {
   const opts = { dateStyle: "medium", timeZone: "Asia/Kolkata" };
   if (withTime) opts.timeStyle = "short";
   return new Intl.DateTimeFormat(lang === "hi" ? "hi-IN" : "en-IN", opts).format(new Date(iso));
+}
+
+/** Compact date + time for cards, e.g. "15 Oct, 11:11 am" */
+export function formatShort(iso, lang) {
+  if (!iso) return "";
+  return new Intl.DateTimeFormat(lang === "hi" ? "hi-IN" : "en-IN", {
+    day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata",
+  }).format(new Date(iso));
 }
 
 /** For plain YYYY-MM-DD values (journey dates, DOB) */

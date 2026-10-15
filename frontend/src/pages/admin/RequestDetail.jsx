@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { api, ApiError } from "../../api";
 import { Alert, PayBadge, Spinner, StatusBadge, errorText } from "../../components";
 import { formatDate, formatDay, money, useI18n } from "../../i18n";
@@ -109,9 +109,6 @@ export default function RequestDetail() {
     <div className="stack-lg">
       <div className="row between">
         <div className="row">
-          <Link to="/admin/requests" className="btn sm">
-            ← {t("common.back")}
-          </Link>
           <h1 style={{ margin: 0 }}>
             {req.service.icon} {pick(req.service, "name")}
           </h1>
@@ -130,7 +127,7 @@ export default function RequestDetail() {
         <div className="stack-lg">
           <section className="clay tone-1" aria-labelledby="cust-t">
             <h2 id="cust-t">{t("detail.customer")}</h2>
-            <p style={{ fontSize: "1.2rem", fontWeight: 800, marginBottom: 4 }}>{req.name}</p>
+            <p style={{ fontSize: "1.05rem", fontWeight: 800, marginBottom: 2 }}>{req.name}</p>
             <p className="mono">{req.phone}</p>
             <div className="row">
               <a className="btn sm" href={`tel:+91${req.phone}`}>
@@ -223,7 +220,7 @@ export default function RequestDetail() {
               <h2 id="pay-t">{t("detail.payment")}</h2>
               <PayBadge status={req.payment_status} />
             </div>
-            {hasFee && <p style={{ fontSize: "1.6rem", fontWeight: 800, margin: "0 0 10px" }}>{money(req.fee)}</p>}
+            {hasFee && <p style={{ fontSize: "1.3rem", fontWeight: 800, margin: "0 0 8px" }}>{money(req.fee)}</p>}
 
             {paid ? (
               <Alert kind="success">{t("detail.paid_on", { d: formatDate(req.paid_at, lang) })}</Alert>

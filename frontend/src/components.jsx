@@ -1,7 +1,46 @@
-import { Link, NavLink, Outlet } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { COMPANY } from "./company";
 import { ApiError } from "./api";
 import { useI18n } from "./i18n";
+
+/**
+ * "← Back" button. Goes to the previous page in this site; if the page was opened
+ * directly (link from WhatsApp, refresh, new tab) it goes to `fallback` instead,
+ * so the button never takes people off the site.
+ */
+export function BackButton({ fallback = "/" }) {
+  const { t } = useI18n();
+  const navigate = useNavigate();
+  const goBack = () => {
+    const cameFromThisSite = (window.history.state?.idx ?? 0) > 0;
+    if (cameFromThisSite) navigate(-1);
+    else navigate(fallback);
+  };
+  return (
+    <button type="button" className="btn sm back-btn" onClick={goBack}>
+      <span aria-hidden="true">←</span> {t("common.back")}
+    </button>
+  );
+}
+
+/** Where "Back" goes when there is no previous page. */
+function backFallback(pathname) {
+  if (pathname.startsWith("/admin/requests/")) return "/admin/requests";
+  if (pathname.startsWith("/admin")) return "/admin";
+  return "/";
+}
+
+/** Shows the Back button on every page except the start pages. */
+export function BackBar({ hideOn = [] }) {
+  const { pathname } = useLocation();
+  const clean = pathname.replace(/\/+$/, "") || "/";
+  if (hideOn.includes(clean)) return null;
+  return (
+    <div className="back-bar">
+      <BackButton fallback={backFallback(clean)} />
+    </div>
+  );
+}
 
 export function LangToggle() {
   const { lang, setLang } = useI18n();
@@ -87,6 +126,7 @@ export function PublicLayout() {
       </header>
 
       <main id="main" className="container" tabIndex={-1}>
+        <BackBar hideOn={["/"]} />
         <Outlet />
       </main>
 
